@@ -1,9 +1,8 @@
-# Example configuration for CustomsCalculator
-
 base_clearance_fee: 30000        # Customs clearance fee (RUB)
 base_util_fee: 20000            # Base utilization fee
 
 # Unified Tariff (ETC) values
+etc_min_euro_per_cc: 15.0       # Minimum 15 EUR/cc
 etc_euro_per_cc: 1.5            # Gasoline: 1.5 EUR/cc
 etc_euro_per_cc_diesel: 2.0     # Diesel: 2.0 EUR/cc
 etc_util_coeff_base: 0.26       # Base utilization coefficient for ETC

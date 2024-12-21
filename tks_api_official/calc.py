@@ -170,17 +170,30 @@ class CustomsCalculator:
 
 def main():
     calculator = CustomsCalculator("config.yaml")
+    # calculator.set_fields(
+    #     price=7000000,
+    #     currency="KRW",
+    #     volume_cc=2000,
+    #     power_hp=300,
+    #     age_category="<3",
+    #     engine_type="diesel",
+    #     is_offroad=True,
+    #     is_already_cleared=False,
+    #     importer_type="legal",
+    # )
+
     calculator.set_fields(
-        price=7000000,
-        currency="KRW",
-        volume_cc=2000,
-        power_hp=300,
+        price=100000,
+        currency="USD",
+        volume_cc=3000,
+        power_hp=500,
         age_category="<3",
         engine_type="diesel",
         is_offroad=True,
         is_already_cleared=False,
         importer_type="legal",
     )
+
     calculator.calculate()
     calculator.print_table()
 
