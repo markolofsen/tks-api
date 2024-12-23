@@ -122,3 +122,5 @@ node_modules/
 
 # Logs
 *.log
+
+/venv

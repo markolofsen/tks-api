@@ -1,24 +1,62 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 import logging
 import yaml
+from enum import Enum
 from tabulate import tabulate
 from currency_converter_free import CurrencyConverter
 
 # Configure logging
+logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-handler = logging.StreamHandler()
-formatter = logging.Formatter("[%(levelname)s] %(message)s")
-handler.setFormatter(formatter)
-logger.addHandler(handler)
 
+# Custom Exceptions
+class WrongParamException(Exception):
+    """Exception raised for invalid parameters."""
+    def __init__(self, message):
+        super().__init__(message)
+        logger.error(message)
+
+# Enums for Vehicle Attributes
+class EnginePowerUnit(Enum):
+    KW = "kilowatt"
+    HP = "horsepower"
+
+class EngineType(Enum):
+    GASOLINE = "gasoline"
+    DIESEL = "diesel"
+    ELECTRIC = "electric"
+    HYBRID = "hybrid"
+
+class VehicleAge(Enum):
+    NEW = "new"
+    ONE_TO_THREE = "1-3"
+    THREE_TO_FIVE = "3-5"
+    FIVE_TO_SEVEN = "5-7"
+    OVER_SEVEN = "over_7"
+
+class VehicleOwnerType(Enum):
+    INDIVIDUAL = "individual"
+    COMPANY = "company"
+
+# Constants for Tariffs
+BASE_VAT = 0.2
+RECYCLING_FEE_BASE_RATE = 20000
+CUSTOMS_CLEARANCE_TAX_RANGES = [
+    (200000, 775),
+    (450000, 1550),
+    (1200000, 3100),
+    (2700000, 8530),
+    (4200000, 12000),
+    (5500000, 15500),
+    (7000000, 20000),
+    (8000000, 23000),
+    (9000000, 25000),
+    (10000000, 27000),
+    (float('inf'), 30000)
+]
 
 class CustomsCalculator:
     """
-    Vehicle customs calculator for ETC (Unified Tariff) or CTP (Comprehensive Payment).
-    Reads configuration from a YAML file and uses `currency_converter_free` for live exchange rates.
+    Customs Calculator for vehicle import duties.
     """
 
     def __init__(self, config_path="config.yaml"):
@@ -31,172 +69,167 @@ class CustomsCalculator:
         try:
             with open(path, "r", encoding="utf-8") as file:
                 config = yaml.safe_load(file)
+            if "tariffs" not in config:
+                raise KeyError("Configuration missing required 'tariffs' structure.")
             logger.info("Configuration loaded.")
             return config
-        except FileNotFoundError:
-            logger.error(f"Configuration file not found: {path}")
-            raise
-        except yaml.YAMLError as e:
-            logger.error(f"Error parsing configuration file: {e}")
+        except Exception as e:
+            logger.error(f"Error loading config: {e}")
             raise
 
     def reset_fields(self):
-        """Initialize or reset all input fields."""
-        self.price = 0.0
-        self.currency = "USD"
-        self.volume_cc = 0
-        self.power_hp = 0.0
-        self.age_category = "3-5"
-        self.engine_type = "gas"
-        self.is_offroad = False
-        self.is_already_cleared = False
-        self.importer_type = "individual"
-        self.results = {}
+        """Reset calculation fields."""
+        self.vehicle_age = None
+        self.engine_capacity = None
+        self.engine_type = None
+        self.vehicle_power = None
+        self.vehicle_price = None
+        self.owner_type = None
+        self.vehicle_currency = "USD"
 
-    def set_fields(self, **kwargs):
-        """Set input fields dynamically."""
-        for key, value in kwargs.items():
-            setattr(self, key, value)
-        logger.info(f"Fields set: {kwargs}")
-
-    def _convert_to_rub(self, amount, currency):
-        """
-        Convert the given amount from a specified currency to RUB.
-        Raises ValueError for unsupported currencies.
-        """
-        logger.info(f"Converting {amount} {currency} to RUB.")
+    def set_vehicle_details(self, age, engine_capacity, engine_type, power, price, owner_type, currency="USD"):
+        """Set the details of the vehicle."""
         try:
-            converted_amount = self.converter.convert(amount, currency.upper(), "RUB")
-            if converted_amount is None:
-                raise ValueError(f"Unsupported currency: {currency}")
-            return converted_amount
+            self.vehicle_age = VehicleAge(age)
+            self.engine_capacity = engine_capacity
+            self.engine_type = EngineType(engine_type)
+            self.vehicle_power = power
+            self.vehicle_price = price
+            self.owner_type = VehicleOwnerType(owner_type)
+            self.vehicle_currency = currency.upper()
+        except ValueError as e:
+            raise WrongParamException(f"Invalid parameter: {e}")
+
+    def calculate_etc(self):
+        """Calculate customs duties using the ETC method."""
+        try:
+            overrides = self.config['tariffs']['age_groups']['overrides'].get(self.vehicle_age.value, {})
+            engine_tariffs = overrides.get(self.engine_type.value)
+
+            rate_per_cc = engine_tariffs['rate_per_cc']
+            duty_rub = rate_per_cc * self.engine_capacity * self.convert_to_local_currency(1, "EUR")
+
+            clearance_fee = self.config['tariffs']['base_clearance_fee']
+            util_fee = self.config['tariffs']['base_util_fee']
+            recycling_fee = self.calculate_recycling_fee()
+
+            total_pay = clearance_fee + duty_rub + util_fee + recycling_fee
+            return {
+                "Mode": "ETC",
+                "Clearance Fee (RUB)": clearance_fee,
+                "Duty (RUB)": duty_rub,
+                "Recycling Fee (RUB)": recycling_fee,
+                "Util Fee (RUB)": util_fee,
+                "Total Pay (RUB)": total_pay,
+            }
+        except KeyError as e:
+            logger.error(f"Missing tariff configuration: {e}")
+            raise
+
+    def calculate_ctp(self):
+        """Calculate customs duties using the CTP method."""
+        try:
+            # Convert price to RUB
+            price_rub = self.convert_to_local_currency(self.vehicle_price, self.vehicle_currency)
+            vat_rate = BASE_VAT
+
+            # Calculate Duty: 20% of price or 0.44 EUR/cm³ minimum
+            duty_rate = 0.2
+            min_duty_per_cc = self.convert_to_local_currency(0.44, "EUR")
+            duty_rub = max(price_rub * duty_rate, min_duty_per_cc * self.engine_capacity)
+
+            # Calculate Excise: Based on engine power
+            excise = self.calculate_excise()
+
+            # Calculate VAT: Applied to price + duty + excise
+            vat = (price_rub + duty_rub + excise) * vat_rate
+
+            # Clearance Fee: Fixed
+            clearance_fee = self.config['tariffs']['base_clearance_fee']
+
+            # Util Fee: Applied based on multiplier
+            util_fee = self.config['tariffs']['base_util_fee'] * self.config['tariffs']['ctp_util_coeff_base']
+
+            # Total Pay
+            total_pay = duty_rub + excise + vat + clearance_fee + util_fee
+            return {
+                "Mode": "CTP",
+                "Price (RUB)": price_rub,
+                "Duty (RUB)": duty_rub,
+                "Excise (RUB)": excise,
+                "VAT (RUB)": vat,
+                "Clearance Fee (RUB)": clearance_fee,
+                "Util Fee (RUB)": util_fee,
+                "Total Pay (RUB)": total_pay,
+            }
+        except KeyError as e:
+            logger.error(f"Missing tariff configuration: {e}")
+            raise
+
+
+    def calculate_clearance_tax(self):
+        """Calculate customs clearance tax based on price."""
+        for price_limit, tax in CUSTOMS_CLEARANCE_TAX_RANGES:
+            if self.vehicle_price <= price_limit:
+                logger.info(f"Customs clearance tax: {tax} RUB")
+                return tax
+        return CUSTOMS_CLEARANCE_TAX_RANGES[-1][1]  # Default to the last range
+
+    def calculate_recycling_fee(self):
+        """Calculate recycling fee."""
+        factors = self.config['tariffs']['recycling_factors']
+        default_factors = factors.get('default', {})
+        adjustments = factors.get('adjustments', {}).get(self.vehicle_age.value, {})
+        engine_factor = adjustments.get(self.engine_type.value, default_factors.get(self.engine_type.value, 1.0))
+        fee = RECYCLING_FEE_BASE_RATE * engine_factor
+        logger.info(f"Recycling fee: {fee} RUB")
+        return fee
+
+    def calculate_excise(self):
+        """Calculate excise based on engine power and engine type."""
+        excise_rate = self.config['tariffs']['excise_rates'][self.engine_type.value]
+        excise = self.vehicle_power * excise_rate
+        logger.info(f"Excise: {excise} RUB")
+        return excise
+
+    def convert_to_local_currency(self, amount, currency="EUR"):
+        """Convert amount from the specified currency to RUB."""
+        try:
+            rate = self.converter.convert(amount, currency, "RUB")
+            logger.info(f"Converted {amount} {currency} to {rate:.2f} RUB")
+            return rate
         except Exception as e:
             logger.error(f"Currency conversion error: {e}")
-            raise ValueError(f"Unsupported currency: {currency}")
+            return None
 
-
-    def calculate(self):
-        """Calculate the customs duties based on the input fields."""
-        if self.is_already_cleared:
-            self.results = {"mode": "CLEARED", "comment": "Vehicle already cleared", "total_pay": 0.0}
-            return
-
-        if (
-            self.importer_type == "individual"
-            and self.age_category == "3-5"
-            and self.volume_cc <= 1000
-            and "electric" not in self.engine_type
-        ):
-            logger.info("Calculating using ETC mode.")
-            self._calc_etc()
-        else:
-            logger.info("Calculating using CTP mode.")
-            self._calc_ctp()
-
-    def _calc_etc(self):
-        """Calculate customs duties using the ETC method."""
-        cfg = self.config
-        try:
-            base_euro_per_cc = (
-                cfg["etc_euro_per_cc_diesel"] if "diesel" in self.engine_type else cfg["etc_euro_per_cc"]
-            )
-            duty_rub = base_euro_per_cc * self.volume_cc * self._convert_to_rub(1, "EUR")
-
-            if self.is_offroad:
-                duty_rub *= 1 + cfg.get("offroad_duty_extra_percent", 0.1)
-
-            clearance_fee = cfg["base_clearance_fee"]
-            util_fee = cfg["base_util_fee"] * cfg["etc_util_coeff_base"]
-
-            self.results = {
-                "mode": "ETC",
-                "clearance_fee": clearance_fee,
-                "duty_rub": duty_rub,
-                "util_fee": util_fee,
-                "total_pay": clearance_fee + duty_rub + util_fee,
-            }
-        except KeyError as e:
-            logger.error(f"Missing configuration key: {e}")
-            raise
-
-    def _calc_ctp(self):
-        """Calculate customs duties using the CTP method."""
-        cfg = self.config
-        try:
-            price_rub = self._convert_to_rub(self.price, self.currency)
-            duty_rub = price_rub * (
-                cfg["ctp_base_duty_percent_diesel"] if "diesel" in self.engine_type else cfg["ctp_base_duty_percent"]
-            )
-            excise = self.power_hp * (
-                cfg["ctp_excise_per_hp_diesel"] if "diesel" in self.engine_type else cfg["ctp_excise_per_hp_benzin"]
-            )
-            if self.is_offroad:
-                excise *= 1 + cfg.get("offroad_excise_extra", 0.1)
-
-            vat = (price_rub + duty_rub + excise) * cfg["vat_percent"]
-            clearance_fee = cfg["base_clearance_fee"]
-            util_fee = cfg["base_util_fee"] * cfg["ctp_util_coeff_base"]
-
-            self.results = {
-                "mode": "CTP",
-                "price_rub": price_rub,
-                "duty_rub": duty_rub,
-                "excise": excise,
-                "vat": vat,
-                "clearance_fee": clearance_fee,
-                "util_fee": util_fee,
-                "total_pay": clearance_fee + duty_rub + excise + vat + util_fee,
-            }
-        except KeyError as e:
-            logger.error(f"Missing configuration key: {e}")
-            raise
-
-    def print_table(self):
+    def print_table(self, mode):
         """Print the calculation results as a table."""
-        if not self.results:
-            logger.warning("No calculation results available.")
-            return
-
-        mode = self.results.get("mode")
-        data = []
-        if mode == "CLEARED":
-            data.append(["Vehicle already cleared", "", "0.00"])
+        if mode == "ETC":
+            results = self.calculate_etc()
+        elif mode == "CTP":
+            results = self.calculate_ctp()
         else:
-            for key, value in self.results.items():
-                if key != "mode":
-                    data.append([key.replace("_", " ").capitalize(), "", f"{value:,.2f}"])
-        print(tabulate(data, headers=["Description", "Details", "Amount (RUB)"], tablefmt="psql"))
+            raise WrongParamException("Invalid calculation mode")
 
-
-def main():
-    calculator = CustomsCalculator("config.yaml")
-    # calculator.set_fields(
-    #     price=7000000,
-    #     currency="KRW",
-    #     volume_cc=2000,
-    #     power_hp=300,
-    #     age_category="<3",
-    #     engine_type="diesel",
-    #     is_offroad=True,
-    #     is_already_cleared=False,
-    #     importer_type="legal",
-    # )
-
-    calculator.set_fields(
-        price=100000,
-        currency="USD",
-        volume_cc=3000,
-        power_hp=500,
-        age_category="<3",
-        engine_type="diesel",
-        is_offroad=True,
-        is_already_cleared=False,
-        importer_type="legal",
-    )
-
-    calculator.calculate()
-    calculator.print_table()
-
+        table = [[k, f"{v:,.2f}" if isinstance(v, (float, int)) else v] for k, v in results.items()]
+        print(tabulate(table, headers=["Description", "Amount"], tablefmt="psql"))
 
 if __name__ == "__main__":
-    main()
+    # Example usage
+    calculator = CustomsCalculator("config.yaml")
+
+    # Set vehicle details (example values)
+    calculator.set_vehicle_details(
+        age="5-7", 
+        engine_capacity=2000, 
+        engine_type="gasoline", 
+        power=150, 
+        price=10000, 
+        owner_type="individual",
+        currency="USD")
+
+    # Print results for ETC mode
+    calculator.print_table("ETC")
+
+    # Print results for CTP mode
+    calculator.print_table("CTP")

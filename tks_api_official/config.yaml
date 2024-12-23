@@ -1,23 +1,37 @@
-base_clearance_fee: 30000        # Customs clearance fee (RUB)
-base_util_fee: 20000            # Base utilization fee
-
-# Unified Tariff (ETC) values
-etc_min_euro_per_cc: 15.0       # Minimum 15 EUR/cc
-etc_euro_per_cc: 1.5            # Gasoline: 1.5 EUR/cc
-etc_euro_per_cc_diesel: 2.0     # Diesel: 2.0 EUR/cc
-etc_util_coeff_base: 0.26       # Base utilization coefficient for ETC
-
-# ETC additional charges
-offroad_duty_extra_percent: 0.1  # +10% duty for offroad vehicles
-diesel_util_extra: 0.1           # +0.1 utilization coefficient for diesel
-offroad_util_extra: 0.05         # +0.05 utilization coefficient for offroad vehicles
-
-# Comprehensive Payment (CTP) values
-ctp_base_duty_percent: 0.15     # Duty percentage for gasoline vehicles
-ctp_base_duty_percent_diesel: 0.16  # Duty percentage for diesel vehicles
-ctp_excise_per_hp_benzin: 912   # Excise per horsepower for gasoline
-ctp_excise_per_hp_diesel: 1000  # Excise per horsepower for diesel
-offroad_excise_extra: 0.1       # +10% excise for offroad vehicles
-
-vat_percent: 0.20               # VAT rate
-ctp_util_coeff_base: 15.03      # Base utilization coefficient for CTP
+tariffs:
+  base_clearance_fee: 3100  # Fixed fee for customs clearance
+  base_util_fee: 20000  # Base utilization fee for all vehicles
+  etc_util_coeff_base: 1.0  # No additional coefficient for ETC by default
+  ctp_util_coeff_base: 1.2  # Slightly increased fee multiplier for CTP
+  excise_rates:  # Excise duty rates based on engine type
+    gasoline: 58  # Rate per horsepower for gasoline engines
+    diesel: 58  # Rate per horsepower for diesel engines
+    electric: 0  # No excise duty for electric vehicles
+    hybrid: 58  # Rate per horsepower for hybrid vehicles
+  recycling_factors:  # Factors for recycling fees
+    default:  # Default factors for engine types
+      gasoline: 1.0  # Base factor for gasoline engines
+      diesel: 1.0  # Base factor for diesel engines
+      electric: 0.3  # Lower factor for electric vehicles
+      hybrid: 1.0  # Base factor for hybrids
+    adjustments:  # Adjustments based on vehicle age
+      "5-7":
+        gasoline: 0.26  # Factor for gasoline engines aged 5-7 years
+        diesel: 0.26  # Factor for diesel engines aged 5-7 years
+        electric: 0.26  # Factor for electric vehicles aged 5-7 years
+        hybrid: 0.26  # Factor for hybrids aged 5-7 years
+  age_groups:  # Defines tariff rules based on vehicle age
+    overrides:
+      "5-7":
+        gasoline:
+          rate_per_cc: 4.8  # Rate in EUR/cm³ for gasoline engines aged 5-7 years
+          min_duty: 0  # No minimum duty for this category
+        diesel:
+          rate_per_cc: 5.0  # Rate in EUR/cm³ for diesel engines aged 5-7 years
+          min_duty: 0  # No minimum duty for this category
+        electric:
+          rate_per_cc: 0  # No duty for electric vehicles
+          min_duty: 1000  # Base minimum duty for electric vehicles
+        hybrid:
+          rate_per_cc: 2.0  # Rate in EUR/cm³ for hybrids
+          min_duty: 2500  # Minimum duty for hybrids
